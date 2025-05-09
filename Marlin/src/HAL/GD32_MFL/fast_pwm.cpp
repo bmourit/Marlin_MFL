@@ -28,7 +28,6 @@
 
 #include <PinOpsMap.hpp>
 #include <PinOps.hpp>
-#include "timers.h"
 
 static uint16_t timer_frequency[TIMER_COUNT];
 
@@ -91,7 +90,7 @@ void MarlinHAL::set_pwm_frequency(const pin_t pin, const uint16_t f_desired) {
   auto& TimerInstance = GeneralTimer::get_instance(timer_base);
 
   TimerInstance.setRolloverValue(f_desired, TimerFormat::HERTZ);
-  timer_frequency[timer_base_to_index(timer_base)] = f_desired;
+  timer_frequency[static_cast<size_t>(timer_base)] = f_desired;
 }
 
 #endif // ARDUINO_ARCH_MFL

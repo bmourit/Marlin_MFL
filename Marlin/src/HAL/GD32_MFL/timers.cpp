@@ -116,7 +116,7 @@ void HAL_timer_start(const uint8_t timer_number, const uint32_t frequency) {
                            static_cast<uint8_t>(STEP_TIMER_IRQ_PRIORITY) :
                            static_cast<uint8_t>(TEMP_TIMER_IRQ_PRIORITY);
 
-  // Get the reference of the timer instance
+  // Get reference to timer instance
   GeneralTimer& timer = is_step ? Step_Timer : Temp_Timer;
 
   if (is_step) {
@@ -193,11 +193,7 @@ void SetTimerInterruptPriorities() {
 // Detect timer conflicts
 // ------------------------
 
-TERN_(HAS_TMC_SW_SERIAL, static constexpr timer::TIMER_Base timer_serial[] = {static_cast<timer::TIMER_Base>(TIMER_SERIAL)});
-TERN_(SPEAKER, static constexpr timer::TIMER_Base timer_tone[] = {static_cast<timer::TIMER_Base>(TIMER_TONE)});
-TERN_(HAS_SERVOS, static constexpr timer::TIMER_Base timer_servo[] = {static_cast<timer::TIMER_Base>(TIMER_SERVO)});
-
-enum TimerPurpose {
+enum TimerPurpose : uint8_t {
   PURPOSE_SERIAL,
   PURPOSE_TONE,
   PURPOSE_SERVO,
@@ -208,33 +204,33 @@ enum TimerPurpose {
 // List of timers to check for conflicts
 // Includes the timer purpose to ease debugging when evaluating at build-time
 // This cannot yet account for timers used for PWM output, such as for fans
-static constexpr struct { TimerPurpose p; int t; } timers_in_use[] = {
+static constexpr struct TimerUse { TimerPurpose purpose; uint8_t timer; } timers_in_use[] = {
   #if HAS_TMC_SW_SERIAL
-    { PURPOSE_SERIAL, timer_base_to_index(timer_serial[0]) }, // Set in variant.h
+    { PURPOSE_SERIAL, TIMER_SERIAL }, // Set in variant.h
   #endif
   #if ENABLED(SPEAKER)
-    { PURPOSE_TONE, timer_base_to_index(timer_tone[0]) },     // Set in variant.h
+    { PURPOSE_TONE, TIMER_TONE },     // Set in variant.h
   #endif
   #if HAS_SERVOS
-    { PURPOSE_SERVO, timer_base_to_index(timer_servo[0]) },   // Set in variant.h
+    { PURPOSE_SERVO, TIMER_SERVO },   // Set in variant.h
   #endif
   { PURPOSE_STEP, MF_TIMER_STEP },
   { PURPOSE_TEMP, MF_TIMER_TEMP },
 };
 
 // Verifies if there are any timer conflicts in the timers_in_use array
-static constexpr bool verify_no_timer_conflicts() {
-  for (uint8_t i = 0; i < COUNT(timers_in_use); i++)
-    for (uint8_t j = i + 1; j < COUNT(timers_in_use); j++)
-      if (timers_in_use[i].t == timers_in_use[j].t)
+static constexpr bool timers_are_unique() {
+  const uint8_t timers_used = COUNT(timers_in_use);
+  for (uint8_t i = 0; i < timers_used; i++)
+    for (uint8_t j = i + 1; j < timers_used; j++)
+      if (timers_in_use[i].timer == timers_in_use[j].timer)
         return false;
-
   return true;
 }
 
 // If this assertion fails at compile time, review the timers_in_use array.
 // If default_envs is defined properly in platformio.ini, VSCode can evaluate the array
 // when hovering over it, making it easy to identify the conflicting timers
-static_assert(verify_no_timer_conflicts(), "One or more timer conflict detected. Examine \"timers_in_use\" to help identify conflict.");
+static_assert(timers_are_unique(), "One or more timer conflict detected. Examine \"timers_in_use\" to help identify conflict.");
 
 #endif // ARDUINO_ARCH_MFL
