@@ -128,6 +128,7 @@ class FTMotion {
     #endif
 
     static void reset();                                  // Reset all states of the fixed time conversion to defaults.
+    static void synchronize_position();                   // Synchronize position of axis to the stepper position.
 
     FORCE_INLINE static bool axis_is_moving(const AxisEnum axis) {
       return cfg.active ? PENDING(millis(), axis_move_end_ti[axis]) : stepper.axis_is_moving(axis);
