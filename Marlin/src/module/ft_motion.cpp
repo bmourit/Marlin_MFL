@@ -89,6 +89,8 @@ xyze_long_t FTMotion::steps = { 0 };            // Step count accumulator.
 
 uint32_t FTMotion::interpIdx = 0;               // Index of current data point being interpolated.
 
+uint8_t FTMotion::cached_extruder_index = 0;    // Cache for extruder index to avoid null pointer dereference
+
 // Shaping variables.
 #if HAS_FTM_SHAPING
   FTMotion::shaping_t FTMotion::shaping = {
@@ -390,6 +392,8 @@ void FTMotion::reset() {
 
   TERN_(HAS_EXTRUDERS, e_raw_z1 = e_advanced_z1 = 0.0f);
 
+  cached_extruder_index = 0;
+
   axis_move_end_ti.reset();
 }
 
@@ -473,6 +477,8 @@ void FTMotion::loadBlockData(block_t * const current_block) {
 
   ratio = moveDist * oneOverLength;
 
+  // Cache the extruder index
+  cached_extruder_index = current_block->extruder;
   const float spm = totalLength / current_block->step_event_count;  // (steps/mm) Distance for each step
 
   f_s = spm * current_block->initial_rate;              // (steps/s) Start feedrate
@@ -721,7 +727,7 @@ void FTMotion::convertToSteps(const uint32_t idx) {
   #if ENABLED(STEPS_ROUNDING)
     #define TOSTEPS(A,B) int32_t(trajMod.A[idx] * planner.settings.axis_steps_per_mm[B] + (trajMod.A[idx] < 0.0f ? -0.5f : 0.5f))
     const xyze_long_t steps_tar = LOGICAL_AXIS_ARRAY(
-      TOSTEPS(e, E_AXIS_N(stepper.current_block->extruder)), // May be eliminated if guaranteed positive.
+      TOSTEPS(e, E_AXIS_N(cached_extruder_index)), // May be eliminated if guaranteed positive.
       TOSTEPS(x, X_AXIS), TOSTEPS(y, Y_AXIS), TOSTEPS(z, Z_AXIS),
       TOSTEPS(i, I_AXIS), TOSTEPS(j, J_AXIS), TOSTEPS(k, K_AXIS),
       TOSTEPS(u, U_AXIS), TOSTEPS(v, V_AXIS), TOSTEPS(w, W_AXIS)
@@ -730,7 +736,7 @@ void FTMotion::convertToSteps(const uint32_t idx) {
   #else
     #define TOSTEPS(A,B) int32_t(trajMod.A[idx] * planner.settings.axis_steps_per_mm[B]) - steps.A
     xyze_long_t delta = LOGICAL_AXIS_ARRAY(
-      TOSTEPS(e, E_AXIS_N(stepper.current_block->extruder)),
+      TOSTEPS(e, E_AXIS_N(cached_extruder_index)),
       TOSTEPS(x, X_AXIS), TOSTEPS(y, Y_AXIS), TOSTEPS(z, Z_AXIS),
       TOSTEPS(i, I_AXIS), TOSTEPS(j, J_AXIS), TOSTEPS(k, K_AXIS),
       TOSTEPS(u, U_AXIS), TOSTEPS(v, V_AXIS), TOSTEPS(w, W_AXIS)

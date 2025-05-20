@@ -169,6 +169,9 @@ class FTMotion {
 
     static xyze_long_t steps;
 
+    // Cache the extruder index to avoid null pointer dereference
+    static uint8_t cached_extruder_index;
+
     // Shaping variables.
     #if HAS_FTM_SHAPING
 
