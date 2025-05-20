@@ -134,6 +134,7 @@ void FTMotion::loop() {
     if (sts_stepperBusy) return;          // Wait until motion buffers are emptied
     discard_planner_block_protected();
     reset();
+    synchronize_position();               // Ensure position is in sync
     stepper.abort_current_block = false;  // Abort finished.
   }
 
@@ -370,13 +371,18 @@ void FTMotion::loop() {
 // Reset all trajectory processing variables.
 void FTMotion::reset() {
 
+  // Reset the static error carryover
+  static xyze_long_t err_P_carryover = { 0 };
+  err_P_carryover.reset();
+
   stepperCmdBuff_produceIdx = stepperCmdBuff_consumeIdx = 0;
 
   traj.reset();
 
   blockProcRdy = batchRdy = batchRdyForInterp = false;
 
-  endPosn_prevBlock.reset();
+  // Synchronize endPosn_prevBlock with the actual stepper position
+  synchronize_position();
 
   makeVector_idx = 0;
   makeVector_batchIdx = TERN(FTM_UNIFIED_BWS, 0, _MIN(BATCH_SIDX_IN_WINDOW, FTM_BATCH_SIZE));
@@ -395,6 +401,33 @@ void FTMotion::reset() {
   cached_extruder_index = 0;
 
   axis_move_end_ti.reset();
+}
+
+void FTMotion::synchronize_position() {
+  // Only synchronize if FTM is active and not currently processing a block
+  if (!cfg.active || blockProcRdy || batchRdy || batchRdyForInterp)
+    return;
+
+  LOOP_LOGICAL_AXES(i) {
+    // Skip axes that don't exist in the machine
+    if (!(TERN0(HAS_EXTRUDERS, i == E_AXIS)) &&
+        !(TERN0(HAS_X_AXIS, i == X_AXIS)) &&
+        !(TERN0(HAS_Y_AXIS, i == Y_AXIS)) &&
+        !(TERN0(HAS_Z_AXIS, i == Z_AXIS)) &&
+        !(TERN0(HAS_I_AXIS, i == I_AXIS)) &&
+        !(TERN0(HAS_J_AXIS, i == J_AXIS)) &&
+        !(TERN0(HAS_K_AXIS, i == K_AXIS)) &&
+        !(TERN0(HAS_U_AXIS, i == U_AXIS)) &&
+        !(TERN0(HAS_V_AXIS, i == V_AXIS)) &&
+        !(TERN0(HAS_W_AXIS, i == W_AXIS)))
+      continue;
+
+    // For extruder, use the cached extruder index
+    const uint8_t axis_idx = (i == E_AXIS) ? E_AXIS_N(cached_extruder_index) : i;
+
+    // Convert steps to mm and store in endPosn_prevBlock
+    endPosn_prevBlock[i] = stepper.position((AxisEnum)i) * planner.mm_per_step[axis_idx];
+  }
 }
 
 // Private functions.
@@ -467,6 +500,15 @@ void FTMotion::loadBlockData(block_t * const current_block) {
     return;
   }
 
+  // Scale down the block parameters if needed
+  const float scale_factor = get_speed_scale_factor(current_block);
+  if (scale_factor < 1.0f) {
+    current_block->nominal_speed *= scale_factor;
+    current_block->initial_rate *= scale_factor;
+    current_block->final_rate *= scale_factor;
+    // No need to adjust acceleration as it will be recalculated below
+  }
+
   const float oneOverLength = 1.0f / totalLength;
 
   startPosn = endPosn_prevBlock;
@@ -489,7 +531,7 @@ void FTMotion::loadBlockData(block_t * const current_block) {
   cached_extruder_index = current_block->extruder;
 
   // Verify step_event_count is non-zero to avoid division by zero
-  const float spm = (current_block->step_event_count > 0)
+  const float spm = (current_block->step_event_count > 0) 
                     ? totalLength / current_block->step_event_count  // (steps/mm) Distance for each step
                     : 0.0f;  // This should never happen due to our check above
 
@@ -521,7 +563,6 @@ void FTMotion::loadBlockData(block_t * const current_block) {
 
   const float accel = current_block->acceleration;
 
-  // Protect against division by zero
   const float oneOverAccel = (accel > 0.000001f) ? 1.0f / accel : 0.0f;
 
   float F_n = current_block->nominal_speed;
@@ -604,6 +645,20 @@ void FTMotion::loadBlockData(block_t * const current_block) {
 
 // Generate data points of the trajectory.
 void FTMotion::makeVector() {
+
+  #if ENABLED(MARLIN_DEV_MODE)
+
+    static bool high_speed_warning_shown = false;
+
+    if (!high_speed_warning_shown && stepper.current_block && 
+        block_exceeds_hardware_limits(stepper.current_block)) {
+      SERIAL_ECHO_MSG("Warning: Move exceeds FTM stepper frequency capability.");
+      SERIAL_ECHO_MSG("Some steps may be lost. Consider reducing speed or increasing FTM_STEPPER_FS.");
+      high_speed_warning_shown = true;
+    }
+
+  #endif  // MARLIN_DEV_MODE
+
   do {
     float accel_k = 0.0f;                                 // (mm/s^2) Acceleration K factor
     float tau = (makeVector_idx + 1) * (FTM_TS);          // (s) Time since start of block
@@ -741,7 +796,8 @@ static void command_set_neg(int32_t &e, int32_t &s, ft_command_t &b, int32_t bd,
 
 // Interpolates single data point to stepper commands.
 void FTMotion::convertToSteps(const uint32_t idx) {
-  xyze_long_t err_P = { 0 };
+  static xyze_long_t err_P_carryover = { 0 }; // Static variable to carry over error between calls
+  xyze_long_t err_P = { 0 };                  // Initialize with previous error
 
   //#define STEPS_ROUNDING
   #if ENABLED(STEPS_ROUNDING)
@@ -785,6 +841,36 @@ void FTMotion::convertToSteps(const uint32_t idx) {
       stepperCmdBuff_produceIdx = 0;
 
   } // FTM_STEPS_PER_UNIT_TIME loop
+
+  // Save the error terms for the next call
+  err_P_carryover = err_P;
+}
+
+float FTMotion::get_speed_scale_factor(const block_t * const block) {
+  // Calculate the maximum step rate the hardware can handle
+  const float max_step_rate = FTM_STEPPER_FS * 0.95f;  // Use 95% of max to be safe
+
+  // Find the axis with the highest step rate
+  float max_steps_per_sec = 0;
+
+  LOOP_LOGICAL_AXES(i) {
+    if (block->steps[i] == 0) continue;
+
+    // Calculate steps per second for this axis
+    const uint8_t axis_idx = (i == E_AXIS) ? E_AXIS_N(block->extruder) : i;
+    const float axis_steps_per_sec = block->nominal_speed *
+                                    (float(block->steps[i]) / block->millimeters) *
+                                     planner.settings.axis_steps_per_mm[axis_idx];
+
+    max_steps_per_sec = _MAX(max_steps_per_sec, axis_steps_per_sec);
+  }
+
+  // If any axis exceeds the maximum step rate, return the scale factor needed
+  return (max_steps_per_sec > max_step_rate) ? (max_step_rate / max_steps_per_sec) : 1.0f;
+}
+
+bool FTMotion::block_exceeds_hardware_limits(const block_t * const block) {
+  return get_speed_scale_factor(block) < 1.0f;
 }
 
 #endif // FT_MOTION

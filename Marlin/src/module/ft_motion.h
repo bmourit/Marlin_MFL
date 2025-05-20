@@ -214,6 +214,8 @@ class FTMotion {
     static void loadBlockData(block_t *const current_block);
     static void makeVector();
     static void convertToSteps(const uint32_t idx);
+    static bool block_exceeds_hardware_limits(const block_t * const block);
+    static float get_speed_scale_factor(const block_t * const block);
 
     FORCE_INLINE static int32_t num_samples_shaper_settle() { return ( shaping.x.ena || shaping.y.ena ) ? FTM_ZMAX : 0; }
 
