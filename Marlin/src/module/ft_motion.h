@@ -170,6 +170,9 @@ class FTMotion {
 
     static xyze_long_t steps;
 
+    // Carries over Bresenham error in convertToSteps
+    static xyze_long_t err_P_carryover;
+
     // Cache the extruder index to avoid null pointer dereference
     static uint8_t cached_extruder_index;
 

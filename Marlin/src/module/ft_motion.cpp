@@ -89,6 +89,8 @@ xyze_long_t FTMotion::steps = { 0 };            // Step count accumulator.
 
 uint32_t FTMotion::interpIdx = 0;               // Index of current data point being interpolated.
 
+xyze_long_t FTMotion::err_P_carryover = { 0 };  // Static error carryover
+
 uint8_t FTMotion::cached_extruder_index = 0;    // Cache for extruder index to avoid null pointer dereference
 
 // Shaping variables.
@@ -372,7 +374,6 @@ void FTMotion::loop() {
 void FTMotion::reset() {
 
   // Reset the static error carryover
-  static xyze_long_t err_P_carryover = { 0 };
   err_P_carryover.reset();
 
   stepperCmdBuff_produceIdx = stepperCmdBuff_consumeIdx = 0;
@@ -654,6 +655,7 @@ void FTMotion::makeVector() {
         block_exceeds_hardware_limits(stepper.current_block)) {
       SERIAL_ECHO_MSG("Warning: Move exceeds FTM stepper frequency capability.");
       SERIAL_ECHO_MSG("Some steps may be lost. Consider reducing speed or increasing FTM_STEPPER_FS.");
+      // Only show the warning once
       high_speed_warning_shown = true;
     }
 
@@ -796,8 +798,7 @@ static void command_set_neg(int32_t &e, int32_t &s, ft_command_t &b, int32_t bd,
 
 // Interpolates single data point to stepper commands.
 void FTMotion::convertToSteps(const uint32_t idx) {
-  static xyze_long_t err_P_carryover = { 0 }; // Static variable to carry over error between calls
-  xyze_long_t err_P = { 0 };                  // Initialize with previous error
+  xyze_long_t err_P = err_P_carryover;  // Initialize with previous error
 
   //#define STEPS_ROUNDING
   #if ENABLED(STEPS_ROUNDING)
@@ -848,25 +849,31 @@ void FTMotion::convertToSteps(const uint32_t idx) {
 
 float FTMotion::get_speed_scale_factor(const block_t * const block) {
   // Calculate the maximum step rate the hardware can handle
-  const float max_step_rate = FTM_STEPPER_FS * 0.95f;  // Use 95% of max to be safe
+  // Use a safety margin (e.g., 95% of max) to account for ISR timing variations and other overhead.
+  const float max_allowable_step_rate = FTM_STEPPER_FS * 0.95f;
 
-  // Find the axis with the highest step rate
-  float max_steps_per_sec = 0;
+  // Find the axis with the highest required step rate for this block
+  float max_required_steps_per_sec = 0.0f;
 
   LOOP_LOGICAL_AXES(i) {
-    if (block->steps[i] == 0) continue;
+    if (block->steps[i] == 0) continue; // Skip axes not moving in this block
 
-    // Calculate steps per second for this axis
-    const uint8_t axis_idx = (i == E_AXIS) ? E_AXIS_N(block->extruder) : i;
-    const float axis_steps_per_sec = block->nominal_speed *
-                                    (float(block->steps[i]) / block->millimeters) *
-                                     planner.settings.axis_steps_per_mm[axis_idx];
+    // Calculate steps per second for this axis if it were to move at block->nominal_speed
+    // axis_steps_per_sec = (toolpath_speed_mm_per_s) * (axis_steps_for_block / toolpath_length_mm)
+    // Note: block->millimeters (totalLength) is checked > 0.000001f in loadBlockData before this might be called.
+    const float axis_steps_per_sec = block->nominal_speed * (float(block->steps[i]) / block->millimeters);
 
-    max_steps_per_sec = _MAX(max_steps_per_sec, axis_steps_per_sec);
+    if (axis_steps_per_sec > max_required_steps_per_sec) {
+      max_required_steps_per_sec = axis_steps_per_sec;
+    }
   }
 
-  // If any axis exceeds the maximum step rate, return the scale factor needed
-  return (max_steps_per_sec > max_step_rate) ? (max_step_rate / max_steps_per_sec) : 1.0f;
+  // If the highest required step rate exceeds what the hardware can do, calculate a scale factor.
+  if (max_required_steps_per_sec > max_allowable_step_rate) {
+    return max_allowable_step_rate / max_required_steps_per_sec;
+  }
+
+  return 1.0f; // No scaling needed
 }
 
 bool FTMotion::block_exceeds_hardware_limits(const block_t * const block) {
