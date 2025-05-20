@@ -458,8 +458,16 @@ void FTMotion::init() {
 // Load / convert block data from planner to fixed-time control variables.
 void FTMotion::loadBlockData(block_t * const current_block) {
 
-  const float totalLength = current_block->millimeters,
-              oneOverLength = 1.0f / totalLength;
+  const float totalLength = current_block->millimeters;
+
+  // If the block is too small or has no steps, discard it and return
+  if (totalLength < 0.000001f || current_block->step_event_count < 1) {
+    discard_planner_block_protected();
+    blockProcRdy = false;  // Mark as not ready so we'll get the next block
+    return;
+  }
+
+  const float oneOverLength = 1.0f / totalLength;
 
   startPosn = endPosn_prevBlock;
   const xyze_pos_t moveDist = LOGICAL_AXIS_ARRAY(
@@ -479,7 +487,11 @@ void FTMotion::loadBlockData(block_t * const current_block) {
 
   // Cache the extruder index
   cached_extruder_index = current_block->extruder;
-  const float spm = totalLength / current_block->step_event_count;  // (steps/mm) Distance for each step
+
+  // Verify step_event_count is non-zero to avoid division by zero
+  const float spm = (current_block->step_event_count > 0)
+                    ? totalLength / current_block->step_event_count  // (steps/mm) Distance for each step
+                    : 0.0f;  // This should never happen due to our check above
 
   f_s = spm * current_block->initial_rate;              // (steps/s) Start feedrate
 
@@ -507,24 +519,27 @@ void FTMotion::loadBlockData(block_t * const current_block) {
               T3 = (F_n - f_e) / a;                     // (s) Decel Time = difference in feedrate over acceleration
   */
 
-  const float accel = current_block->acceleration,
-              oneOverAccel = 1.0f / accel;
+  const float accel = current_block->acceleration;
+
+  // Protect against division by zero
+  const float oneOverAccel = (accel > 0.000001f) ? 1.0f / accel : 0.0f;
 
   float F_n = current_block->nominal_speed;
   const float ldiff = totalLength + 0.5f * oneOverAccel * (sq(f_s) + sq(f_e));
 
-  float T2 = ldiff / F_n - oneOverAccel * F_n;
+  float T2 = (F_n > 0.000001f) ? (ldiff / F_n - oneOverAccel * F_n) : 0.0f;
   if (T2 < 0.0f) {
     T2 = 0.0f;
-    F_n = SQRT(ldiff * accel);
+    F_n = (ldiff * accel > 0.000001f) ? SQRT(ldiff * accel) : 0.000001f;
   }
 
   const float T1 = (F_n - f_s) * oneOverAccel,
               T3 = (F_n - f_e) * oneOverAccel;
 
-  N1 = CEIL(T1 * (FTM_FS));         // Accel datapoints based on Hz frequency
-  N2 = CEIL(T2 * (FTM_FS));         // Coast
-  N3 = CEIL(T3 * (FTM_FS));         // Decel
+  // Ensure we have at least one datapoint in each phase
+  N1 = _MAX(1, CEIL(T1 * (FTM_FS)));         // Accel datapoints based on Hz frequency
+  N2 = _MAX(1, CEIL(T2 * (FTM_FS)));         // Coast
+  N3 = _MAX(1, CEIL(T3 * (FTM_FS)));         // Decel
 
   const float T1_P = N1 * (FTM_TS), // (s) Accel datapoints x timestep resolution
               T2_P = N2 * (FTM_TS), // (s) Coast
@@ -542,12 +557,17 @@ void FTMotion::loadBlockData(block_t * const current_block) {
    *  f_e * T3_P : (mm) Distance traveled during the decel phase
    */
   const float adist = f_s * T1_P;
-  F_P = (2.0f * totalLength - adist - f_e * T3_P) / (T1_P + 2.0f * T2_P + T3_P); // (mm/s) Feedrate at the end of the accel phase
+
+  // Protect against division by zero in denominator
+  const float denom = T1_P + 2.0f * T2_P + T3_P;
+  F_P = (denom > 0.000001f)
+        ? (2.0f * totalLength - adist - f_e * T3_P) / denom  // (mm/s) Feedrate at the end of the accel phase
+        : f_s;  // Fallback to start feedrate if denominator is too small
 
   // Calculate the acceleration and deceleration rates
-  accel_P = N1 ? ((F_P - f_s) / T1_P) : 0.0f;
+  accel_P = (N1 && T1_P > 0.000001f) ? ((F_P - f_s) / T1_P) : 0.0f;
 
-  decel_P = (f_e - F_P) / T3_P;
+  decel_P = (T3_P > 0.000001f) ? ((f_e - F_P) / T3_P) : 0.0f;
 
   // Calculate the distance traveled during the accel phase
   s_1e = adist + 0.5f * accel_P * sq(T1_P);
