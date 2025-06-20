@@ -118,6 +118,10 @@
   #include "../module/ft_motion.h"
 #endif
 
+#if ENABLED(MODAL_NULLING)
+  #include "../module/modal_nulling.h"
+#endif
+
 #if HAS_FILAMENT_SENSOR
   #include "../feature/runout.h"
   #ifndef FIL_RUNOUT_ENABLED_DEFAULT
@@ -656,6 +660,13 @@ typedef struct SettingsDataStruct {
   //
   #if ENABLED(FT_MOTION)
     ft_config_t ftMotion_cfg;                           // M493
+  #endif
+
+  //
+  // Modal-Orthogonal Nulling
+  //
+  #if ENABLED(MODAL_NULLING)
+    mn_config_t modalNulling_cfg;                       // M957
   #endif
 
   //
@@ -1767,6 +1778,14 @@ void MarlinSettings::postprocess() {
     #if ENABLED(FT_MOTION)
       _FIELD_TEST(ftMotion_cfg);
       EEPROM_WRITE(ftMotion.cfg);
+    #endif
+
+    //
+    // Modal-Orthogonal Nulling
+    //
+    #if ENABLED(MODAL_NULLING)
+      _FIELD_TEST(modalNulling_cfg);
+      EEPROM_WRITE(modalNulling.cfg);
     #endif
 
     //
@@ -2887,6 +2906,14 @@ void MarlinSettings::postprocess() {
       #endif
 
       //
+      // Modal-Orthogonal Nulling
+      //
+      #if ENABLED(MODAL_NULLING)
+        _FIELD_TEST(modalNulling_cfg);
+        EEPROM_READ(modalNulling.cfg);
+      #endif
+
+      //
       // Input Shaping
       //
       #if ENABLED(INPUT_SHAPING_X)
@@ -3760,6 +3787,11 @@ void MarlinSettings::reset() {
   TERN_(FT_MOTION, ftMotion.set_defaults());
 
   //
+  // Modal-Orthogonal Nulling
+  //
+  TERN_(MODAL_NULLING, modalNulling.set_defaults());
+
+  //
   // Nonlinear Extrusion
   //
   TERN_(NONLINEAR_EXTRUSION, stepper.ne.settings.reset());
@@ -4059,6 +4091,11 @@ void MarlinSettings::reset() {
     // Fixed-Time Motion
     //
     TERN_(FT_MOTION, gcode.M493_report(forReplay));
+
+    //
+    // Modal-Orthogonal Nulling
+    //
+    TERN_(MODAL_NULLING, gcode.M957_report(forReplay));
 
     //
     // Nonlinear Extrusion
