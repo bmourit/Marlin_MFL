@@ -28,6 +28,10 @@
 #include "stepper.h" // Access stepper block queue function and abort status.
 #include "endstops.h"
 
+#if ENABLED(MODAL_NULLING)
+  #include "modal_nulling.h"
+#endif
+
 FTMotion ftMotion;
 
 //-----------------------------------------------------------------
@@ -563,6 +567,26 @@ void FTMotion::loadBlockData(block_t * const current_block) {
 
   endPosn_prevBlock += moveDist;
 
+  #if ENABLED(MODAL_NULLING)
+    // Analyze this motion segment for modal nulling
+    const bool has_x_motion = (moveDist.x != 0.0f);
+    const bool has_y_motion = (moveDist.y != 0.0f);
+    const float total_time = (N1 + N2 + N3) * FTM_TS;
+
+    modalNulling.analyze_motion_segment(
+      f_s,           // start speed
+      F_P,           // peak speed
+      f_e,           // end speed
+      accel,         // acceleration magnitude
+      total_time,    // total segment time
+      T1_P,          // accel time
+      T2_P,          // coast time
+      T3_P,          // decel time
+      has_x_motion,  // X axis motion flag
+      has_y_motion   // Y axis motion flag
+    );
+  #endif
+
   // Watch endstops until the move ends
   const millis_t move_end_ti = millis() + SEC_TO_MS((FTM_TS) * float(max_intervals + num_samples_shaper_settle() + ((PROP_BATCHES) + 1) * (FTM_BATCH_SIZE)) + (float(FTM_STEPPERCMD_BUFF_SIZE) / float(FTM_STEPPER_FS)));
 
@@ -605,6 +629,11 @@ void FTMotion::makeVector() {
 
     #define _SET_TRAJ(q) traj.q[makeVector_batchIdx] = startPosn.q + ratio.q * dist;
     LOGICAL_AXIS_MAP_LC(_SET_TRAJ);
+
+    #if ENABLED(MODAL_NULLING)
+      // Apply modal nulling trajectory correction
+      modalNulling.apply_trajectory_correction(makeVector_idx, makeVector_batchIdx, tau, traj);
+    #endif
 
     #if HAS_EXTRUDERS
       if (cfg.linearAdvEna) {
