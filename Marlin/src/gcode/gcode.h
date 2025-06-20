@@ -323,6 +323,7 @@
  * M920 - Set Homing Current. (Requires distinct *_CURRENT_HOME settings)
  * M936 - OTA update firmware. (Requires OTA_FIRMWARE_UPDATE)
  * M951 - Set Magnetic Parking Extruder parameters. (Requires MAGNETIC_PARKING_EXTRUDER)
+ * M957 - Get or set Modal-Orthogonal Nulling paraneters. (Requires MODAL_NULLING)
  * M3426 - Read MCP3426 ADC over I2C. (Requires HAS_MCP3426_ADC)
  * M7219 - Control Max7219 Matrix LEDs. (Requires MAX7219_GCODE)
  *
@@ -1293,6 +1294,11 @@ private:
 
   #if ENABLED(MAGNETIC_PARKING_EXTRUDER)
     static void M951();
+  #endif
+
+  #if ENABLED(MODAL_NULLING)
+    static void M957();
+    static void M957_report(const bool forReplay=true);
   #endif
 
   #if ENABLED(TOUCH_SCREEN_CALIBRATION)
