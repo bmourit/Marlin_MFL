@@ -23,101 +23,130 @@
 #pragma once
 
 /**
- * modal_nulling.h - Modal-Orthogonal Nulling Kernel
+ * modal_nulling.h - Modal-Orthogonal Nulling for FT_Motion
  *
- * This feature implements a real-time, orthogonal model-based modifier
- * that predicts and cancels modal excitations before they occur -
- * using closed-form modal nulling kernels that adapt to move shapes
+ * This feature implements real-time modal nulling that works exclusively with FT_Motion
+ * to cancel resonance excitation by ensuring trajectory orthogonality to dominant modes.
  *
- * Designed as an alternative to, and an improvement over, filtered B-Splines.
+ * Designed to be an alternative improvement to the patented filtered B-Splines approach.
+ *
+ * Theory:
+ * For a second-order system H(s) = ωₙ²/(s² + 2ζωₙs + ωₙ²)
+ * We minimize modal projection: E_mode = ∫ x(t) * sin(ω₀t) dt = 0
+ *
+ * The correction kernel: k(t) = a * sin(ω₀t + φ) * exp(-βt)
+ * Results in: x'(t) = x(t) + k(t) with zero modal excitation
  */
 
 #include "../inc/MarlinConfigPre.h"
-#include "../module/planner.h"
+
+#if ENABLED(MODAL_NULLING)
+
 #include "../core/types.h"
+#include "ft_types.h"
 
 typedef struct {
   bool enabled = MODAL_NULLING_DEFAULT_ENABLED;
-  float freq[XY] = { MODAL_NULLING_DEFAULT_FREQ_X, MODAL_NULLING_DEFAULT_FREQ_Y };          // Resonant frequencies for X and Y axes (Hz)
-  float damping[XY] = { MODAL_NULLING_DEFAULT_DAMPING_X, MODAL_NULLING_DEFAULT_DAMPING_Y }; // Damping factors for X and Y axes (dimensionless)
+  float freq[XY] = { MODAL_NULLING_DEFAULT_FREQ_X, MODAL_NULLING_DEFAULT_FREQ_Y };          // Resonant frequencies ω₀ (Hz)
+  float damping[XY] = { MODAL_NULLING_DEFAULT_DAMPING_X, MODAL_NULLING_DEFAULT_DAMPING_Y }; // Damping ratios ζ
+  float beta[XY] = { MODAL_NULLING_DEFAULT_BETA_X, MODAL_NULLING_DEFAULT_BETA_Y };          // Kernel decay rates β
 } mn_config_t;
+
+// Modal nulling kernel parameters
+typedef struct {
+  float amplitude;    // Kernel amplitude 'a'
+  float phase;        // Kernel phase 'φ'
+  float decay;        // Kernel decay 'β'
+  float frequency;    // Target frequency ω₀
+  bool valid;         // Kernel validity flag
+} modal_kernel_t;
+
+// Motion segment analysis for modal nulling
+typedef struct {
+  bool has_motion[XY];           // Motion flags for each axis
+  float segment_time;            // Total segment duration
+  float accel_time;              // Acceleration phase duration
+  float coast_time;              // Coasting phase duration  
+  float decel_time;              // Deceleration phase duration
+  float start_speed;             // Initial speed
+  float peak_speed;              // Peak/nominal speed
+  float end_speed;               // Final speed
+  float acceleration;            // Acceleration magnitude
+  modal_kernel_t kernels[XY];    // Pre-computed kernels for each axis
+  bool valid;                    // Analysis validity flag
+} motion_segment_t;
 
 class ModalNulling {
 public:
   // Public variables
-  static omn_config_t cfg;
+  static mn_config_t cfg;
 
   // Public methods
   static void init();
   static void reset();
   static void set_defaults();
 
-  // Apply modal nulling to a block
-  static void modify_trapezoid_parameters(block_t* const block, uint32_t& initial_rate,
-                                          uint32_t& final_rate, int32_t& accelerate_steps,
-                                          int32_t& decelerate_steps, int32_t& plateau_steps,
-                                          const float inverse_accel);
+  // FT_Motion integration - trajectory modification
+  static void analyze_motion_segment(const float start_speed, const float peak_speed, const float end_speed,
+                                     const float acceleration, const float segment_time,
+                                     const float accel_time, const float coast_time, const float decel_time,
+                                     const bool has_x_motion, const bool has_y_motion);
 
-  #if ENABLED(S_CURVE_ACCELERATION)
-    static void modify_scurve_parameters(block_t* const block, uint32_t& initial_rate,
-                                        uint32_t& final_rate, uint32_t& cruise_rate,
-                                        uint32_t& acceleration_time, uint32_t& deceleration_time,
-                                        uint32_t& acceleration_time_inverse, uint32_t& deceleration_time_inverse);
-  #endif
+  static void apply_trajectory_correction(const uint32_t trajectory_idx, const uint32_t batch_idx,
+                                          const float segment_time, xyze_trajectory_t& trajectory);
 
 private:
-  // Internal methods
-  static bool should_modify_block(const block_t* const block);
-  static float compute_acceleration_adjustment(block_t* const block, const float initial_speed,
-                                               const float final_speed, const float time);
-  static float compute_deceleration_adjustment(block_t* const block, const float initial_speed,
-                                               const float final_speed, const float time);
+  // Current motion segment analysis
+  static motion_segment_t current_segment;
 
-  // Analytical computation of modal projection
-  static float compute_modal_projection(const float freq, const float damping,
-                                        const float accel, const float initial_rate,
-                                        const float time);
+  // Core modal nulling functions
+  static bool should_apply_nulling(const bool has_x_motion, const bool has_y_motion,
+                                   const float segment_time, const float peak_speed);
 
-  // Derivative of modal projection w.r.t. acceleration scaling
-  static float compute_modal_projection_derivative(const float freq, const float damping,
-                                                   const float accel, const float initial_rate,
-                                                   const float time);
+  // Modal projection calculations
+  static float compute_modal_projection(const float freq, const float start_speed, const float peak_speed,
+                                        const float end_speed, const float acceleration,
+                                        const float accel_time, const float coast_time, const float decel_time);
 
-  // Compute nulling factor using analytical orthogonality
-  static float compute_modal_nulling_factor(const float freq, const float damping,
-                                            const float accel, const float initial_rate,
-                                            const float time);
+  // Kernel computation and optimization
+  static modal_kernel_t compute_nulling_kernel(const float freq, const float damping, const float beta,
+                                               const float modal_projection, const float segment_time);
 
-  #if ENABLED(S_CURVE_ACCELERATION)
-    static float compute_scurve_acceleration_adjustment(block_t* const block, const float initial_speed,
-                                                        const float final_speed, const float time);
-    static float compute_scurve_deceleration_adjustment(block_t* const block, const float initial_speed,
-                                                        const float final_speed, const float time);
-    static float compute_modal_nulling_factor_scurve(const float freq, const float damping,
-                                                     const float initial_speed, const float final_speed,
-                                                     const float time);
-    static float compute_modal_projection_scurve(const float freq, const float damping,
-                                                const float initial_speed, const float final_speed,
-                                                const float time);
-  #endif // S_CURVE_ACCELERATION
+  // Analytical modal projection for different motion phases
+  static float compute_accel_phase_projection(const float freq, const float start_speed,
+                                              const float acceleration, const float accel_time);
+  static float compute_coast_phase_projection(const float freq, const float coast_speed, const float coast_time);
+  static float compute_decel_phase_projection(const float freq, const float peak_speed,
+                                              const float deceleration, const float decel_time);
 
-  // Advanced modal analysis functions
-  static float simulate_modal_response_analytical(const float freq, const float damping, 
-                                                  const float accel, const float initial_rate,
-                                                  const float final_rate, const float time);
+  // Kernel application to trajectory points
+  static float evaluate_kernel(const modal_kernel_t& kernel, const float time);
+  static float evaluate_position_correction_from_kernel(const modal_kernel_t& kernel, const float time);
+  static void apply_kernel_to_trajectory_point(const modal_kernel_t& kernel, const float time,
+                                               const AxisEnum axis, const uint32_t batch_idx,
+                                              xyze_trajectory_t& trajectory);
 
-  static float compute_optimal_phase_shift(const float freq, const float damping,
-                                           const float accel, const float initial_rate,
-                                           const float time);
-
-  static float compute_modal_projection_cosine(const float freq, const float damping,
-                                               const float accel, const float initial_rate,
-                                               const float time);
+  // Analytical integration helpers
+  static float integrate_sin_product(const float omega, const float time);
+  static float integrate_linear_sin_product(const float omega, const float slope, const float time);
+  static float integrate_kernel_sin_product(const modal_kernel_t& kernel, const float time);
+  static float integrate_sin_squared_exp(const float omega, const float beta, const float time);
+  static float integrate_sin_cos_exp(const float omega, const float beta, const float time);
+  static float integrate_sin_exp_product(const float omega, const float beta, const float time);
+  static float integrate_cos_exp_product(const float omega, const float beta, const float time);
 
   // Validation and debugging
-  static bool validate_modal_nulling(const float freq, const float damping,
-                                     const float original_accel, const float modified_accel,
-                                     const float initial_rate, const float time);
+  static bool validate_kernel(const modal_kernel_t& kernel, const float original_projection,
+                              const float segment_time);
+  static float compute_residual_projection(const modal_kernel_t& kernel, const float original_projection,
+                                           const float segment_time);
+
+  #if ENABLED(DEBUG_MODAL_NULLING)
+    static void debug_print_segment_analysis(const motion_segment_t& segment);
+    static void debug_print_kernel(const modal_kernel_t& kernel, const char* axis_name);
+  #endif
 };
 
 extern ModalNulling modalNulling;
+
+#endif // MODAL_NULLING && FT_MOTION
