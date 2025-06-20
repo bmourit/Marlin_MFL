@@ -1206,6 +1206,29 @@
 #endif
 
 /**
+ * Modal-Orthogonal Nulling for FT_MOTION - EXPERIMENTAL FEATURE
+ * A real-time, model-orthogonal based modifier that predicts and
+ * nulls modal excitations before they occur by adjusting acceleration profiles.
+ * Enable/disable and set parameters with G-code M957.
+ */
+#if ENABLED(FT_MOTION)
+  //#define MODAL_NULLING
+  #if ENABLED(MODAL_NULLING)
+    #define MODAL_NULLING_DEFAULT_ENABLED     false   // Enable Modal Nulling by default?
+
+    #define MODAL_NULLING_DEFAULT_FREQ_X      40.0f   // (Hz) Default resonant frequency for X axis
+    #define MODAL_NULLING_DEFAULT_FREQ_Y      40.0f   // (Hz) Default resonant frequency for Y axis
+    #define MODAL_NULLING_DEFAULT_DAMPING_X    0.1f   // Default damping factor for X axis
+    #define MODAL_NULLING_DEFAULT_DAMPING_Y    0.1f   // Default damping factor for Y axis
+    #define MODAL_NULLING_DEFAULT_BETA_X       0.5f   // Default kernel decay rate for X axis
+    #define MODAL_NULLING_DEFAULT_BETA_Y       0.5f   // Default kernel decay rate for Y axis
+
+    #define MODAL_NULLING_MENU                        // Provide a MarlinUI menu to set M957 parameters
+    //#define DEBUG_MODAL_NULLING                    // Enable debug output
+  #endif // MODAL_NULLING
+#endif // FT_MOTION
+
+/**
  * Input Shaping
  *
  * Zero Vibration (ZV) Input Shaping for X and/or Y movements.
