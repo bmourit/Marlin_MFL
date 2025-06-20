@@ -478,6 +478,10 @@ namespace LanguageNarrow_en {
   LSTR MSG_SHAPING_A_ZETA                 = STR_A _UxGT(" damping");    // ProUI
   LSTR MSG_SHAPING_B_ZETA                 = STR_B _UxGT(" damping");    // ProUI
   LSTR MSG_SHAPING_C_ZETA                 = STR_C _UxGT(" damping");    // ProUI
+  LSTR MSG_MODAL_NULLING                  = _UxGT("Modal Nulling");
+  LSTR MSG_MODAL_NULLING_FREQ_N           = _UxGT("@ Frequency");
+  LSTR MSG_MODAL_NULLING_DAMP_N           = _UxGT("@ Damping");
+  LSTR MSG_MODAL_NULLING_BETA_N           = _UxGT("@ Beta");
   LSTR MSG_XY_FREQUENCY_LIMIT             = _UxGT("XY Freq Limit");
   LSTR MSG_XY_FREQUENCY_FEEDRATE          = _UxGT("Min FR Factor");
   LSTR MSG_STEPS_PER_MM                   = _UxGT("Steps/mm");

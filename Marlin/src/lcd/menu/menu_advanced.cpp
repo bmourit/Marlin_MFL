@@ -53,6 +53,10 @@
   #include "../../feature/runout.h"
 #endif
 
+#if ENABLED(MODAL_NULLING_MENU)
+  #include "../../module/modal_nulling.h"
+#endif
+
 #if ENABLED(SD_FIRMWARE_UPDATE)
   #include "../../module/settings.h"
 #endif
@@ -615,6 +619,44 @@ void menu_backlash();
 
   #endif
 
+  #if ENABLED(MODAL_NULLING_MENU)
+
+    void menu_advanced_modal_nulling() {
+      START_MENU();
+      BACK_ITEM(MSG_ADVANCED_SETTINGS);
+
+      // Enable/Disable Modal Nulling
+      EDIT_ITEM(bool, MSG_MODAL_NULLING, &modalNulling.cfg.enabled);
+
+      // X-axis frequency
+      editable.decimal = modalNulling.cfg.freq[X_AXIS];
+      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 100.0f, []{ modalNulling.cfg.freq[X_AXIS] = editable.decimal; });
+
+      // X-axis damping
+      editable.decimal = modalNulling.cfg.damping[X_AXIS];
+      EDIT_ITEM_FAST_N(float42_52, X_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.01f, 1.0f, []{ modalNulling.cfg.damping[X_AXIS] = editable.decimal; });
+
+      // X-axis beta
+      editable.decimal = modalNulling.cfg.beta[X_AXIS];
+      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 10.0f, []{ modalNulling.cfg.beta[X_AXIS] = editable.decimal; });
+
+      // Y-axis frequency
+      editable.decimal = modalNulling.cfg.freq[Y_AXIS];
+      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 100.0f, []{ modalNulling.cfg.freq[Y_AXIS] = editable.decimal; });
+
+      // Y-axis damping
+      editable.decimal = modalNulling.cfg.damping[Y_AXIS];
+      EDIT_ITEM_FAST_N(float42_52, Y_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.01f, 1.0f, []{ modalNulling.cfg.damping[Y_AXIS] = editable.decimal; });
+
+      // Y-axis beta
+      editable.decimal = modalNulling.cfg.beta[Y_AXIS];
+      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 10.0f, []{ modalNulling.cfg.beta[Y_AXIS] = editable.decimal; });
+
+      END_MENU();
+    }
+
+  #endif // MODAL_NULLING_MENU
+
   #if ENABLED(CLASSIC_JERK)
 
     void menu_advanced_jerk() {
@@ -675,7 +717,7 @@ void menu_backlash();
 #endif // EDITABLE_STEPS_PER_UNIT
 
 void menu_advanced_settings() {
-  #if ANY(POLARGRAPH, SHAPING_MENU, HAS_BED_PROBE, EDITABLE_STEPS_PER_UNIT)
+  #if ANY(POLARGRAPH, SHAPING_MENU, MODAL_NULLING_MENU, HAS_BED_PROBE, EDITABLE_STEPS_PER_UNIT)
     const bool is_busy = printer_busy();
   #endif
 
@@ -711,9 +753,14 @@ void menu_advanced_settings() {
     // M201 - Acceleration items
     SUBMENU(MSG_ACCELERATION, menu_advanced_acceleration);
 
-    // M593 - Acceleration items
+    // M593 - Shaping items
     #if ENABLED(SHAPING_MENU)
       SUBMENU(MSG_INPUT_SHAPING, menu_advanced_input_shaping);
+    #endif
+
+    // M957 - Modal-Orthogonal Nulling
+    #if ENABLED(MODAL_NULLING_MENU)
+      SUBMENU(MSG_MODAL_NULLING, menu_advanced_modal_nulling);
     #endif
 
     #if ENABLED(CLASSIC_JERK)
