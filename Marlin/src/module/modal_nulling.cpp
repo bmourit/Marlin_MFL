@@ -31,7 +31,6 @@ mn_config_t ModalNulling::cfg;
 motion_segment_t ModalNulling::current_segment;
 
 void ModalNulling::init() {
-  set_defaults();
   reset();
 }
 
@@ -63,34 +62,31 @@ void ModalNulling::analyze_motion_segment(const float start_speed, const float p
     SERIAL_ECHOLNPGM("Y motion: ", has_y_motion ? "Yes" : "No");
   #endif
 
-  if (!cfg.enabled) {
-    current_segment.valid = false;
-    return;
-  }
-
-  // Check if nulling should be applied
-  if (!should_apply_nulling(has_x_motion, has_y_motion, segment_time, peak_speed)) {
+  if (!cfg.enabled || !should_apply_nulling(has_x_motion, has_y_motion, segment_time, peak_speed)) {
     current_segment.valid = false;
     return;
   }
 
   // Store segment parameters
-  current_segment.has_motion[X_AXIS] = has_x_motion;
-  current_segment.has_motion[Y_AXIS] = has_y_motion;
-  current_segment.segment_time = segment_time;
-  current_segment.accel_time = accel_time;
-  current_segment.coast_time = coast_time;
-  current_segment.decel_time = decel_time;
-  current_segment.start_speed = start_speed;
-  current_segment.peak_speed = peak_speed;
-  current_segment.end_speed = end_speed;
-  current_segment.acceleration = acceleration;
+  current_segment = {
+    .has_motion = { has_x_motion, has_y_motion },
+    .segment_time = segment_time,
+    .accel_time = accel_time,
+    .coast_time = coast_time,
+    .decel_time = decel_time,
+    .start_speed = start_speed,
+    .peak_speed = peak_speed,
+    .end_speed = end_speed,
+    .acceleration = acceleration,
+    .valid = true
+  };
 
   // Compute nulling kernels for each axis
-  for (uint8_t axis = 0; axis < XY; axis++) {
-    if (current_segment.has_motion[axis] && cfg.freq[axis] > 0.0f) {
+  for (uint8_t axis = 0; axis < XY; ++axis) {
+    const float freq = cfg.freq[axis];
+    if (current_segment.has_motion[axis] && freq > 0.0f) {
       // Compute modal projection for this axis
-      const float modal_proj = compute_modal_projection(cfg.freq[axis], start_speed, peak_speed, end_speed,
+      const float modal_proj = compute_modal_projection(freq, start_speed, peak_speed, end_speed,
                                                         acceleration, accel_time, coast_time, decel_time);
 
       #if ENABLED(DEBUG_MODAL_NULLING)
@@ -99,7 +95,7 @@ void ModalNulling::analyze_motion_segment(const float start_speed, const float p
       #endif
 
       // Compute exact nulling kernel
-      current_segment.kernels[axis] = compute_nulling_kernel(cfg.freq[axis], cfg.damping[axis],
+      current_segment.kernels[axis] = compute_nulling_kernel(freq, cfg.damping[axis], 
                                                              cfg.beta[axis], modal_proj, segment_time);
 
       #if ENABLED(DEBUG_MODAL_NULLING)
@@ -116,8 +112,6 @@ void ModalNulling::analyze_motion_segment(const float start_speed, const float p
       current_segment.kernels[axis].valid = false;
     }
   }
-
-  current_segment.valid = true;
 }
 
 void ModalNulling::apply_trajectory_correction(const uint32_t trajectory_idx, const uint32_t batch_idx,
@@ -137,7 +131,7 @@ void ModalNulling::apply_trajectory_correction(const uint32_t trajectory_idx, co
   #endif
 
   // Apply kernels to each axis
-  for (uint8_t axis = 0; axis < XY; axis++) {
+  for (uint8_t axis = 0; axis < XY; ++axis) {
     if (current_segment.kernels[axis].valid) {
 
       #if ENABLED(DEBUG_MODAL_NULLING)
@@ -176,64 +170,46 @@ void ModalNulling::apply_trajectory_correction(const uint32_t trajectory_idx, co
 }
 
 bool ModalNulling::should_apply_nulling(const bool has_x_motion, const bool has_y_motion,
-                                       const float segment_time, const float peak_speed) {
+                                        const float segment_time, const float peak_speed) {
   // Must have motion on at least one axis
-  if (!has_x_motion && !has_y_motion) return false;
-
-  // Segment must be long enough for meaningful nulling
-  if (segment_time < 0.01f) return false;
-
-  // Don't apply to very fast moves (likely travel moves)
-  //if (peak_speed > 500.0f) return false;
+  if (!(has_x_motion || has_y_motion) || segment_time < 0.01f) return false;
 
   // Must have valid frequencies configured
-  bool has_valid_freq = false;
-  for (uint8_t axis = 0; axis < XY; axis++) {
-    if (cfg.freq[axis] > 0.0f && cfg.freq[axis] < 100.0f) {
-      has_valid_freq = true;
-      break;
-    }
+  for (uint8_t axis = 0; axis < XY; ++axis) {
+    const float f = cfg.freq[axis];
+    if (f > 0.0f && f < 200.0f) return true;
   }
 
-  return has_valid_freq;
+  return false;
 }
 
 float ModalNulling::compute_modal_projection(const float freq, const float start_speed, const float peak_speed,
-                                            const float end_speed, const float acceleration,
-                                            const float accel_time, const float coast_time, const float decel_time) {
+                                             const float end_speed, const float acceleration,
+                                             const float accel_time, const float coast_time, const float decel_time) {
   if (freq <= 0.0f) return 0.0f;
 
-  float total_projection = 0.0f;
+  float total_proj = 0.0f;
 
-  // Acceleration phase projection
-  if (accel_time > 0.0f) {
-    total_projection += compute_accel_phase_projection(freq, start_speed, acceleration, accel_time);
-  }
-
-  // Coast phase projection
-  if (coast_time > 0.0f) {
-    total_projection += compute_coast_phase_projection(freq, peak_speed, coast_time);
-  }
-
-  // Deceleration phase projection
+  // Phase projections
+  if (accel_time > 0.0f) total_proj += compute_accel_phase_projection(freq, start_speed, acceleration, accel_time);
+  if (coast_time > 0.0f) total_proj += compute_coast_phase_projection(freq, peak_speed, coast_time);
   if (decel_time > 0.0f) {
-    const float deceleration = (peak_speed - end_speed) / decel_time;
-    total_projection += compute_decel_phase_projection(freq, peak_speed, deceleration, decel_time);
+    const float decel = (peak_speed - end_speed) / decel_time;
+    total_proj += compute_decel_phase_projection(freq, peak_speed, decel, decel_time);
   }
 
-  return total_projection;
+  return total_proj;
 }
 
 modal_kernel_t ModalNulling::compute_nulling_kernel(const float freq, const float damping, const float beta,
-                                                   const float modal_projection, const float segment_time) {
-  modal_kernel_t kernel = {0};
+                                                    const float modal_projection, const float segment_time) {
+  modal_kernel_t kernel = {};
   kernel.frequency = freq;
   kernel.decay = beta;
   kernel.valid = false;
 
-  if (fabsf(modal_projection) < 1e-8f || freq <= 0.0f || segment_time <= 0.0f) {
+  if (fabsf(modal_projection) < 1e-8f || freq <= 0.0f || segment_time <= 0.0f)
     return kernel;
-  }
 
   const float omega = 2.0f * M_PI * freq;
 
@@ -261,11 +237,10 @@ modal_kernel_t ModalNulling::compute_nulling_kernel(const float freq, const floa
 
     // Compute effective integral value
     const float I_eff = I1 * cosf(kernel.phase) + I2 * sinf(kernel.phase);
-
     if (fabsf(I_eff) > 1e-12f) {
       kernel.amplitude = -modal_projection / I_eff;
 
-      // Validate the solution mathematically rather than using arbitrary bounds
+      // Validate the solution mathematically
       kernel.valid = validate_kernel(kernel, modal_projection, segment_time);
     }
   }
@@ -274,10 +249,12 @@ modal_kernel_t ModalNulling::compute_nulling_kernel(const float freq, const floa
 }
 
 float ModalNulling::compute_accel_phase_projection(const float freq, const float start_speed,
-                                                  const float acceleration, const float accel_time) {
+                                                   const float acceleration, const float accel_time) {
   if (freq <= 0.0f || accel_time <= 0.0f) return 0.0f;
 
   const float omega = 2.0f * M_PI * freq;
+  const float coswt = cosf(omega * accel_time);
+  const float sinwt = sinf(omega * accel_time);
 
   // For acceleration phase: v(t) = start_speed + acceleration * t over [0, T_accel]
   // Modal projection = ∫₀ᵀ v(t) * sin(ωt) dt
@@ -285,13 +262,15 @@ float ModalNulling::compute_accel_phase_projection(const float freq, const float
   //                  = v₀ * ∫₀ᵀ sin(ωt) dt + a * ∫₀ᵀ t*sin(ωt) dt
 
   // Component 1: v₀ * ∫₀ᵀ sin(ωt) dt = v₀ * [-cos(ωt)/ω]₀ᵀ = v₀/ω * (1 - cos(ωT))
-  const float comp1 = start_speed / omega * (1.0f - cosf(omega * accel_time));
-
+  //const float comp1 = start_speed / omega * (1.0f - cosf(omega * accel_time));
+  //
   // Component 2: a * ∫₀ᵀ t*sin(ωt) dt = a * [sin(ωt)/ω² - t*cos(ωt)/ω]₀ᵀ
-  const float comp2 = acceleration / (omega * omega) *
-                     (sinf(omega * accel_time) - omega * accel_time * cosf(omega * accel_time));
+  //const float comp2 = acceleration / (omega * omega) * 
+  //                   (sinf(omega * accel_time) - omega * accel_time * cosf(omega * accel_time));
+  //
+  //return comp1 + comp2;
 
-  return comp1 + comp2;
+  return (start_speed / omega) * (1.0f - coswt) + (acceleration / (omega * omega)) * (sinwt - omega * accel_time * coswt);
 }
 
 float ModalNulling::compute_coast_phase_projection(const float freq, const float coast_speed, const float coast_time) {
@@ -307,23 +286,27 @@ float ModalNulling::compute_coast_phase_projection(const float freq, const float
 }
 
 float ModalNulling::compute_decel_phase_projection(const float freq, const float peak_speed,
-                                                  const float deceleration, const float decel_time) {
+                                                   const float deceleration, const float decel_time) {
   if (freq <= 0.0f || decel_time <= 0.0f) return 0.0f;
 
   const float omega = 2.0f * M_PI * freq;
+  const float coswt = cosf(omega * decel_time);
+  const float sinwt = sinf(omega * decel_time);
 
   // For deceleration phase: v(t) = peak_speed - deceleration * t over [0, T_decel]
   // This is similar to acceleration but with negative slope
   // Modal projection = ∫₀ᵀ (v_peak - decel*t) * sin(ωt) dt
 
   // Component 1: v_peak * ∫₀ᵀ sin(ωt) dt
-  const float comp1 = peak_speed / omega * (1.0f - cosf(omega * decel_time));
-
+  //const float comp1 = peak_speed / omega * (1.0f - cosf(omega * decel_time));
+  //
   // Component 2: -decel * ∫₀ᵀ t*sin(ωt) dt
-  const float comp2 = -deceleration / (omega * omega) *
-                     (sinf(omega * decel_time) - omega * decel_time * cosf(omega * decel_time));
+  //const float comp2 = -deceleration / (omega * omega) * 
+  //                   (sinf(omega * decel_time) - omega * decel_time * cosf(omega * decel_time));
+  //
+  //return comp1 + comp2;
 
-  return comp1 + comp2;
+  return (peak_speed / omega) * (1.0f - coswt) - (deceleration / (omega * omega)) * (sinwt - omega * decel_time * coswt);
 }
 
 float ModalNulling::evaluate_kernel(const modal_kernel_t& kernel, const float time) {
@@ -389,13 +372,11 @@ void ModalNulling::apply_kernel_to_trajectory_point(const modal_kernel_t& kernel
       if (batch_idx % 50 == 0) { // Debug every 50th point
         SERIAL_ECHOLNPGM("Modal correction - Axis: ", axis, " Time: ", time);
         SERIAL_ECHOLNPGM(" Kernel value: ", kernel_value);
-        SERIAL_ECHOLNPGM(" Position correction: ", correction);
-        SERIAL_ECHOLNPGM(" Original pos: ", original_pos);
-        SERIAL_ECHOLNPGM(" Corrected pos: ", (axis == X_AXIS) ? trajectory.x[batch_idx] : trajectory.y[batch_idx]);
-
-        // For very small values, multiply by 1000000 to show micrometers
         if (fabsf(correction) < 0.001f) {
-          SERIAL_ECHOLNPGM(" Correction (micrometers): ", correction * 1000000.0f);
+          SERIAL_ECHOLNPGM(" Position correction (um): ", correction * 1000000.0f);
+        } else {
+          SERIAL_ECHOLNPGM(" Position correction (um): ", correction * 1000000.0f);
+          SERIAL_ECHOLNPGM(" Position correction ~(mm): ", correction);
         }
       }
     #endif

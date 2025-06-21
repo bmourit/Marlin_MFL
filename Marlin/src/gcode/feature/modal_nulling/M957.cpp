@@ -65,34 +65,34 @@ void GcodeSuite::M957() {
 
   if (parser.seen('F')) {
     const float freq = parser.value_float();
-    if (WITHIN(freq, 1.0f, 100.0f)) {
+    if (WITHIN(freq, 1.0f, 200.0f)) {
       if (for_X) modalNulling.cfg.freq[X_AXIS] = freq;
       if (for_Y) modalNulling.cfg.freq[Y_AXIS] = freq;
     }
     else {
-      SERIAL_ECHO_MSG("?Frequency (F) value out of range (1-100 Hz)");
+      SERIAL_ECHO_MSG("?Frequency (F) value out of range (1-200 Hz)");
     }
   }
 
   if (parser.seen('D')) {
     const float damping = parser.value_float();
-    if (WITHIN(damping, 0.01f, 0.99f)) {
+    if (WITHIN(damping, 0.0f, 1.0f)) {
       if (for_X) modalNulling.cfg.damping[X_AXIS] = damping;
       if (for_Y) modalNulling.cfg.damping[Y_AXIS] = damping;
     }
     else {
-      SERIAL_ECHO_MSG("?Damping (D) value out of range (0.01-0.99)");
+      SERIAL_ECHO_MSG("?Damping (D) value out of range (0.0-1.0)");
     }
   }
 
   if (parser.seen('B')) {
     const float beta = parser.value_float();
-    if (WITHIN(beta, 0.1f, 10.0f)) {
+    if (WITHIN(beta, 0.1f, 200.0f)) {
       if (for_X) modalNulling.cfg.beta[X_AXIS] = beta;
       if (for_Y) modalNulling.cfg.beta[Y_AXIS] = beta;
     }
     else {
-      SERIAL_ECHO_MSG("?Beta (B) value out of range (0.1-10.0)");
+      SERIAL_ECHO_MSG("?Beta (B) value out of range (0.1-200.0)");
     }
   }
 }

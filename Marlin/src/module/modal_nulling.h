@@ -124,7 +124,7 @@ private:
   static float evaluate_position_correction_from_kernel(const modal_kernel_t& kernel, const float time);
   static void apply_kernel_to_trajectory_point(const modal_kernel_t& kernel, const float time,
                                                const AxisEnum axis, const uint32_t batch_idx,
-                                              xyze_trajectory_t& trajectory);
+                                               xyze_trajectory_t& trajectory);
 
   // Analytical integration helpers
   static float integrate_sin_product(const float omega, const float time);

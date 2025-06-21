@@ -630,27 +630,27 @@ void menu_backlash();
 
       // X-axis frequency
       editable.decimal = modalNulling.cfg.freq[X_AXIS];
-      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 100.0f, []{ modalNulling.cfg.freq[X_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 200.0f, []{ modalNulling.cfg.freq[X_AXIS] = editable.decimal; });
 
       // X-axis damping
       editable.decimal = modalNulling.cfg.damping[X_AXIS];
-      EDIT_ITEM_FAST_N(float42_52, X_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.01f, 1.0f, []{ modalNulling.cfg.damping[X_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float42_52, X_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.0f, 1.0f, []{ modalNulling.cfg.damping[X_AXIS] = editable.decimal; });
 
       // X-axis beta
       editable.decimal = modalNulling.cfg.beta[X_AXIS];
-      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 10.0f, []{ modalNulling.cfg.beta[X_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float41, X_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 200.0f, []{ modalNulling.cfg.beta[X_AXIS] = editable.decimal; });
 
       // Y-axis frequency
       editable.decimal = modalNulling.cfg.freq[Y_AXIS];
-      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 100.0f, []{ modalNulling.cfg.freq[Y_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_FREQ_N, &editable.decimal, 1.0f, 200.0f, []{ modalNulling.cfg.freq[Y_AXIS] = editable.decimal; });
 
       // Y-axis damping
       editable.decimal = modalNulling.cfg.damping[Y_AXIS];
-      EDIT_ITEM_FAST_N(float42_52, Y_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.01f, 1.0f, []{ modalNulling.cfg.damping[Y_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float42_52, Y_AXIS, MSG_MODAL_NULLING_DAMP_N, &editable.decimal, 0.0f, 1.0f, []{ modalNulling.cfg.damping[Y_AXIS] = editable.decimal; });
 
       // Y-axis beta
       editable.decimal = modalNulling.cfg.beta[Y_AXIS];
-      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 10.0f, []{ modalNulling.cfg.beta[Y_AXIS] = editable.decimal; });
+      EDIT_ITEM_FAST_N(float41, Y_AXIS, MSG_MODAL_NULLING_BETA_N, &editable.decimal, 0.1f, 200.0f, []{ modalNulling.cfg.beta[Y_AXIS] = editable.decimal; });
 
       END_MENU();
     }

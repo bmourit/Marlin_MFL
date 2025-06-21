@@ -1218,10 +1218,10 @@
 
     #define MODAL_NULLING_DEFAULT_FREQ_X      40.0f   // (Hz) Default resonant frequency for X axis
     #define MODAL_NULLING_DEFAULT_FREQ_Y      40.0f   // (Hz) Default resonant frequency for Y axis
-    #define MODAL_NULLING_DEFAULT_DAMPING_X    0.1f   // Default damping factor for X axis
-    #define MODAL_NULLING_DEFAULT_DAMPING_Y    0.1f   // Default damping factor for Y axis
-    #define MODAL_NULLING_DEFAULT_BETA_X       0.5f   // Default kernel decay rate for X axis
-    #define MODAL_NULLING_DEFAULT_BETA_Y       0.5f   // Default kernel decay rate for Y axis
+    #define MODAL_NULLING_DEFAULT_DAMPING_X    0.05f  // Default damping factor for X axis
+    #define MODAL_NULLING_DEFAULT_DAMPING_Y    0.05f  // Default damping factor for Y axis
+    #define MODAL_NULLING_DEFAULT_BETA_X      13.0f   // Default kernel decay rate for X axis
+    #define MODAL_NULLING_DEFAULT_BETA_Y      13.0f   // Default kernel decay rate for Y axis
 
     #define MODAL_NULLING_MENU                        // Provide a MarlinUI menu to set M957 parameters
     //#define DEBUG_MODAL_NULLING                    // Enable debug output
