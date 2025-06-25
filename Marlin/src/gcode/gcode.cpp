@@ -1101,6 +1101,10 @@ void GcodeSuite::process_parsed_command(bool no_ok/*=false*/) {
         case 951: M951(); break;                                  // M951: Set Magnetic Parking Extruder parameters
       #endif
 
+      #if ENABLED(MODAL_NULLING)
+        case 957: M957(); break;                                  // M957: Set Modal-Orthogonal Nulling parameters
+      #endif
+
       #if ENABLED(Z_STEPPER_AUTO_ALIGN)
         case 422: M422(); break;                                  // M422: Set Z Stepper automatic alignment position using probe
       #endif

@@ -45,6 +45,44 @@
 #include "../core/types.h"
 #include "ft_types.h"
 
+#if DISABLED(HIGH_PRECISION_KERNELS)
+
+  // x in radians, expected in range [0, PI]
+  // Very fast and surprisingly accurate
+  static float fast_sin_pi_half(float x) {
+    return (16.0f * x * (M_PI - x)) / (5.0f * M_PI * M_PI - 4.0f * x * (M_PI - x));
+  }
+
+  static float sin_approx(float x) {
+    // Wrap x to [0, 2π]
+    while (x < 0.0f)      x += 2.0f * M_PI;
+    while (x > 2.0f * M_PI) x -= 2.0f * M_PI;
+
+    // Reflect into [0, PI]
+    bool negate = false;
+    if (x > M_PI) {
+      x -= M_PI;
+      negate = true;
+    }
+
+    float s = fast_sin_pi_half(x);
+    return negate ? -s : s;
+  }
+
+  static float cos_approx(float x) {
+    return sin_approx(x + M_PI_2);
+  }
+
+#endif // DISABLED(HIGH_PRECISION_KERNELS)
+
+#if ENABLED(HIGH_PRECISION_KERNELS)
+  #define SIN(x)  sinf(x)
+  #define COS(x)  cosf(x)
+#else
+  #define SIN(x)  sin_approx(x)
+  #define COS(x)  cos_approx(x)
+#endif
+
 typedef struct {
   bool enabled = MODAL_NULLING_DEFAULT_ENABLED;
   float freq[XY] = { MODAL_NULLING_DEFAULT_FREQ_X, MODAL_NULLING_DEFAULT_FREQ_Y };          // Resonant frequencies ω₀ (Hz)
@@ -72,6 +110,7 @@ typedef struct {
   float peak_speed;              // Peak/nominal speed
   float end_speed;               // Final speed
   float acceleration;            // Acceleration magnitude
+  float deceleration;            // Deceleration magnitude
   modal_kernel_t kernels[XY];    // Pre-computed kernels for each axis
   bool valid;                    // Analysis validity flag
 } motion_segment_t;
@@ -88,7 +127,7 @@ public:
 
   // FT_Motion integration - trajectory modification
   static void analyze_motion_segment(const float start_speed, const float peak_speed, const float end_speed,
-                                     const float acceleration, const float segment_time,
+                                     const float acceleration, const float deceleration, const float segment_time,
                                      const float accel_time, const float coast_time, const float decel_time,
                                      const bool has_x_motion, const bool has_y_motion);
 
@@ -105,8 +144,44 @@ private:
 
   // Modal projection calculations
   static float compute_modal_projection(const float freq, const float start_speed, const float peak_speed,
-                                        const float end_speed, const float acceleration,
+                                        const float end_speed, const float acceleration, float deceleration,
                                         const float accel_time, const float coast_time, const float decel_time);
+
+  #if ANY(S_CURVE_ACCELERATION, HAS_JUNCTION_DEVIATION)
+
+    static float compute_enhanced_modal_projection(const float freq, const float start_speed, const float peak_speed,
+                                                   const float end_speed, const float acceleration, const float deceleration,
+                                                   const float accel_time, const float coast_time, const float decel_time);
+
+    #if ENABLED(S_CURVE_ACCELERATION)
+      static float compute_s_curve_accel_projection(const float freq, const float start_speed, const float peak_speed,
+                                                    const float acceleration, const float accel_time);
+      static float compute_s_curve_decel_projection(const float freq, const float peak_speed, const float end_speed,
+                                                    const float deceleration, const float decel_time);
+      static float compute_cubic_velocity_projection(const float freq, const float v0, const float cubic_coeff,
+                                                     const float duration, const float time_offset);
+      static float compute_cubic_decel_projection(const float freq, const float v0, const float linear_coeff, const float cubic_coeff,
+                                                  const float duration, const float time_offset);
+      static float compute_linear_accel_projection(const float freq, const float v0, const float acceleration,
+                                                   const float duration, const float time_offset);
+      static float compute_linear_decel_projection(const float freq, const float v0, const float deceleration,
+                                                   const float duration, const float time_offset);
+    #endif
+
+    #if HAS_JUNCTION_DEVIATION
+
+      static float apply_junction_deviation_correction(const float base_projection, const float freq,
+                                                       const float start_speed, const float peak_speed, const float end_speed,
+                                                       const float accel_time, const float coast_time, const float decel_time);
+      static float compute_junction_resonance_projection(const float freq, const float junction_time, const float peak_speed);
+      static float compute_junction_velocity_smoothing(const float freq, const float start_speed, const float peak_speed,
+                                                       const float end_speed, const float junction_time, const float junction_radius);
+      static float get_junction_deviation_setting();
+      static float calculate_junction_angle(const xyze_float_t& prev_unit_vec, const xyze_float_t& curr_unit_vec);
+
+    #endif
+
+  #endif // S_CURVE_ACCELERATION || HAS_JUNCTION_DEVIATION
 
   // Kernel computation and optimization
   static modal_kernel_t compute_nulling_kernel(const float freq, const float damping, const float beta,

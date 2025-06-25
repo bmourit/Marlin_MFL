@@ -577,7 +577,8 @@ void FTMotion::loadBlockData(block_t * const current_block) {
       f_s,           // start speed
       F_P,           // peak speed
       f_e,           // end speed
-      accel,         // acceleration magnitude
+      accel_P,       // acceleration rate
+      decel_P,       // deceleration rate
       total_time,    // total segment time
       T1_P,          // accel time
       T2_P,          // coast time

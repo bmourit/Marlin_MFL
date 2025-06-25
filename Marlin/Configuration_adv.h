@@ -1223,6 +1223,8 @@
     #define MODAL_NULLING_DEFAULT_BETA_X      13.0f   // Default kernel decay rate for X axis
     #define MODAL_NULLING_DEFAULT_BETA_Y      13.0f   // Default kernel decay rate for Y axis
 
+    //#define HIGH_PRECISION_KERNELS                  // Enable high precision kernels (MCUs with FPU can safely enable)
+
     #define MODAL_NULLING_MENU                        // Provide a MarlinUI menu to set M957 parameters
     //#define DEBUG_MODAL_NULLING                    // Enable debug output
   #endif // MODAL_NULLING

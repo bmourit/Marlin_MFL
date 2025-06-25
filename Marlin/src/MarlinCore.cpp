@@ -53,9 +53,6 @@
 #if ENABLED(FT_MOTION)
   #include "module/ft_motion.h"
 #endif
-#if ENABLED(MODAL_NULLING)
-  #include "module/modal_nulling.h"
-#endif
 
 #include "gcode/gcode.h"
 #include "gcode/parser.h"
@@ -1694,10 +1691,6 @@ void setup() {
 
   #if ENABLED(FT_MOTION)
     SETUP_RUN(ftMotion.init());
-  #endif
-
-  #if ENABLED(MODAL_NULLING)
-    SETUP_RUN(modalNulling.init());
   #endif
 
   marlin_state = MarlinState::MF_RUNNING;
