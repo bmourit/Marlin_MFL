@@ -147,42 +147,6 @@ private:
                                         const float end_speed, const float acceleration, float deceleration,
                                         const float accel_time, const float coast_time, const float decel_time);
 
-  #if ANY(S_CURVE_ACCELERATION, HAS_JUNCTION_DEVIATION)
-
-    static float compute_enhanced_modal_projection(const float freq, const float start_speed, const float peak_speed,
-                                                   const float end_speed, const float acceleration, const float deceleration,
-                                                   const float accel_time, const float coast_time, const float decel_time);
-
-    #if ENABLED(S_CURVE_ACCELERATION)
-      static float compute_s_curve_accel_projection(const float freq, const float start_speed, const float peak_speed,
-                                                    const float acceleration, const float accel_time);
-      static float compute_s_curve_decel_projection(const float freq, const float peak_speed, const float end_speed,
-                                                    const float deceleration, const float decel_time);
-      static float compute_cubic_velocity_projection(const float freq, const float v0, const float cubic_coeff,
-                                                     const float duration, const float time_offset);
-      static float compute_cubic_decel_projection(const float freq, const float v0, const float linear_coeff, const float cubic_coeff,
-                                                  const float duration, const float time_offset);
-      static float compute_linear_accel_projection(const float freq, const float v0, const float acceleration,
-                                                   const float duration, const float time_offset);
-      static float compute_linear_decel_projection(const float freq, const float v0, const float deceleration,
-                                                   const float duration, const float time_offset);
-    #endif
-
-    #if HAS_JUNCTION_DEVIATION
-
-      static float apply_junction_deviation_correction(const float base_projection, const float freq,
-                                                       const float start_speed, const float peak_speed, const float end_speed,
-                                                       const float accel_time, const float coast_time, const float decel_time);
-      static float compute_junction_resonance_projection(const float freq, const float junction_time, const float peak_speed);
-      static float compute_junction_velocity_smoothing(const float freq, const float start_speed, const float peak_speed,
-                                                       const float end_speed, const float junction_time, const float junction_radius);
-      static float get_junction_deviation_setting();
-      static float calculate_junction_angle(const xyze_float_t& prev_unit_vec, const xyze_float_t& curr_unit_vec);
-
-    #endif
-
-  #endif // S_CURVE_ACCELERATION || HAS_JUNCTION_DEVIATION
-
   // Kernel computation and optimization
   static modal_kernel_t compute_nulling_kernel(const float freq, const float damping, const float beta,
                                                const float modal_projection, const float segment_time);

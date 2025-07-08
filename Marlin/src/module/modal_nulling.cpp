@@ -25,7 +25,6 @@
 #if ENABLED(MODAL_NULLING)
 
 #include "modal_nulling.h"
-#include "../module/planner.h"    // Access junction deviation
 
 ModalNulling modalNulling;
 mn_config_t ModalNulling::cfg;
@@ -87,16 +86,10 @@ void ModalNulling::analyze_motion_segment(const float start_speed, const float p
   for (uint8_t axis = 0; axis < XY; ++axis) {
     const float freq = cfg.freq[axis];
     if (current_segment.has_motion[axis] && freq > 0.0f) {
-      #if ANY(S_CURVE_ACCELERATION, HAS_JUNCTION_DEVIATION)
-        const float modal_proj = compute_enhanced_modal_projection(freq, start_speed, peak_speed, end_speed,
+      // Compute modal projection for this axis
+      const float modal_proj = compute_modal_projection(freq, start_speed, peak_speed, end_speed,
                                                         acceleration, deceleration, accel_time,
                                                         coast_time, decel_time);
-      #else
-        // Compute modal projection for this axis
-        const float modal_proj = compute_modal_projection(freq, start_speed, peak_speed, end_speed,
-                                                          acceleration, deceleration, accel_time,
-                                                          coast_time, decel_time);
-      #endif
 
       #if ENABLED(DEBUG_MODAL_NULLING)
         SERIAL_ECHOLNPGM("Axis ", axis, " modal projection: ", modal_proj);
@@ -207,414 +200,6 @@ float ModalNulling::compute_modal_projection(const float freq, const float start
   return total_proj;
 }
 
-#if ENABLED(S_CURVE_ACCELERATION) || HAS_JUNCTION_DEVIATION
-  float ModalNulling::compute_enhanced_modal_projection(const float freq, const float start_speed, const float peak_speed,
-                                                        const float end_speed, const float acceleration, const float deceleration,
-                                                        const float accel_time, const float coast_time, const float decel_time) {
-    if (freq <= 0.0f) return 0.0f;
-
-    float total_proj = 0.0f;
-
-    #if ENABLED(S_CURVE_ACCELERATION)
-      // S-curve acceleration uses a 7-segment velocity profile:
-      // 1. Jerk-limited acceleration ramp-up (cubic velocity profile)
-      // 2. Constant acceleration phase (linear velocity profile) 
-      // 3. Jerk-limited acceleration ramp-down (cubic velocity profile)
-      // 4. Constant velocity coast
-      // 5. Jerk-limited deceleration ramp-up (cubic velocity profile)
-      // 6. Constant deceleration phase (linear velocity profile)
-      // 7. Jerk-limited deceleration ramp-down (cubic velocity profile)
-
-      if (accel_time > 0.0f) {
-        total_proj += compute_s_curve_accel_projection(freq, start_speed, peak_speed, acceleration, accel_time);
-      }
-    #else
-      // Standard trapezoidal acceleration
-      if (accel_time > 0.0f) {
-        total_proj += compute_accel_phase_projection(freq, start_speed, acceleration, accel_time);
-      }
-    #endif
-
-    // Coast phase (same for both profiles)
-    if (coast_time > 0.0f) {
-      total_proj += compute_coast_phase_projection(freq, peak_speed, coast_time);
-    }
-
-    #if ENABLED(S_CURVE_ACCELERATION)
-      if (decel_time > 0.0f) {
-        total_proj += compute_s_curve_decel_projection(freq, peak_speed, end_speed, deceleration, decel_time);
-      }
-    #else
-      // Standard trapezoidal deceleration
-      if (decel_time > 0.0f) {
-        total_proj += compute_decel_phase_projection(freq, peak_speed, deceleration, decel_time);
-      }
-    #endif
-
-    #if HAS_JUNCTION_DEVIATION
-      // Junction deviation modifies the velocity profile at direction changes
-      // Apply the full junction deviation correction
-      total_proj = apply_junction_deviation_correction(total_proj, freq, start_speed, peak_speed, end_speed,
-                                                       accel_time, coast_time, decel_time);
-    #endif
-
-    return total_proj;
-  }
-
-  #if ENABLED(S_CURVE_ACCELERATION)
-
-    float ModalNulling::compute_s_curve_accel_projection(const float freq, const float start_speed, const float peak_speed,
-                                                         const float acceleration, const float accel_time) {
-      if (freq <= 0.0f || accel_time <= 0.0f) return 0.0f;
-
-      // S-curve parameters from Marlin's implementation
-      // The S-curve is divided into three phases with specific time ratios
-      const float speed_change = peak_speed - start_speed;
-      const float avg_acceleration = speed_change / accel_time;
-
-      // Calculate jerk value - this determines the curvature of the S-curve
-      // In Marlin, jerk is calculated based on the maximum allowed jerk for the axis
-      const float max_jerk = acceleration * 2.0f; // Simplified - actual value comes from configuration
-      const float jerk_time = avg_acceleration / max_jerk;
-
-      // Ensure jerk time doesn't exceed half the acceleration time
-      const float actual_jerk_time = _MIN(jerk_time, accel_time * 0.5f);
-      const float linear_accel_time = accel_time - 2.0f * actual_jerk_time;
-
-      float total_projection = 0.0f;
-      float current_time = 0.0f;
-      float current_speed = start_speed;
-
-      if (actual_jerk_time > 0.0f) {
-        // Phase 1: Jerk-limited ramp-up (cubic velocity profile)
-        // v(t) = v₀ + (j/6) * t³, where j = acceleration/jerk_time
-        const float jerk = avg_acceleration / actual_jerk_time;
-        total_projection += compute_cubic_velocity_projection(freq, current_speed, jerk / 6.0f, actual_jerk_time, current_time);
-
-        current_time += actual_jerk_time;
-        current_speed += 0.5f * avg_acceleration * actual_jerk_time;
-
-        // Phase 2: Linear acceleration
-        if (linear_accel_time > 0.0f) {
-          total_projection += compute_linear_accel_projection(freq, current_speed, avg_acceleration, linear_accel_time, current_time);
-          current_time += linear_accel_time;
-          current_speed += avg_acceleration * linear_accel_time;
-        }
-
-        // Phase 3: Jerk-limited ramp-down (cubic velocity profile)
-        // v(t) = v₁ + a₁*t - (j/6) * t³
-        const float phase3_start_speed = current_speed;
-        total_projection += compute_cubic_decel_projection(freq, phase3_start_speed, avg_acceleration, -jerk / 6.0f, actual_jerk_time, current_time);
-      } else {
-        // No jerk limiting - pure linear acceleration
-        total_projection += compute_linear_accel_projection(freq, start_speed, avg_acceleration, accel_time, 0.0f);
-      }
-
-      return total_projection;
-    }
-
-    float ModalNulling::compute_s_curve_decel_projection(const float freq, const float peak_speed, const float end_speed,
-                                                         const float deceleration, const float decel_time) {
-      if (freq <= 0.0f || decel_time <= 0.0f) return 0.0f;
-
-      // S-curve deceleration parameters
-      const float speed_change = peak_speed - end_speed;
-      const float avg_deceleration = speed_change / decel_time;
-
-      const float max_jerk = deceleration * 2.0f;
-      const float jerk_time = avg_deceleration / max_jerk;
-      const float actual_jerk_time = _MIN(jerk_time, decel_time * 0.5f);
-      const float linear_decel_time = decel_time - 2.0f * actual_jerk_time;
-
-      float total_projection = 0.0f;
-      float current_time = 0.0f;
-      float current_speed = peak_speed;
-
-      if (actual_jerk_time > 0.0f) {
-        // Phase 1: Jerk-limited decel ramp-up
-        const float jerk = avg_deceleration / actual_jerk_time;
-        total_projection += compute_cubic_decel_projection(freq, current_speed, 0.0f, -jerk / 6.0f, actual_jerk_time, current_time);
-
-        current_time += actual_jerk_time;
-        current_speed -= 0.5f * avg_deceleration * actual_jerk_time;
-
-        // Phase 2: Linear deceleration
-        if (linear_decel_time > 0.0f) {
-          total_projection += compute_linear_decel_projection(freq, current_speed, avg_deceleration, linear_decel_time, current_time);
-          current_time += linear_decel_time;
-          current_speed -= avg_deceleration * linear_decel_time;
-        }
-
-        // Phase 3: Jerk-limited decel ramp-down
-        total_projection += compute_cubic_velocity_projection(freq, current_speed, jerk / 6.0f, actual_jerk_time, current_time);
-      } else {
-        // No jerk limiting - pure linear deceleration
-        total_projection += compute_linear_decel_projection(freq, peak_speed, avg_deceleration, decel_time, 0.0f);
-      }
-
-      return total_projection;
-    }
-
-    float ModalNulling::compute_cubic_velocity_projection(const float freq, const float v0, const float cubic_coeff,
-                                                          const float duration, const float time_offset) {
-      // For velocity profile: v(t) = v₀ + c * t³
-      // Modal projection: ∫₀ᵀ v(t) * sin(ω(t + offset)) dt
-
-      if (freq <= 0.0f || duration <= 0.0f) return 0.0f;
-
-      const float omega = 2.0f * M_PI * freq;
-      const float cos_offset = COS(omega * time_offset);
-      const float sin_offset = SIN(omega * time_offset);
-      const float T = duration;
-      const float omega2 = omega * omega;
-      const float omega3 = omega2 * omega;
-      const float omega4 = omega3 * omega;
-
-      // Analytical integration of v₀ * sin(ω(t + offset))
-      const float linear_term = (v0 / omega) * (cos_offset - COS(omega * (T + time_offset)));
-
-      // Analytical integration of c * t³ * sin(ω(t + offset))
-      // This requires integration by parts multiple times
-      const float T2 = T * T;
-      const float T3 = T2 * T;
-      const float cosWT = COS(omega * T);
-      const float sinWT = SIN(omega * T);
-
-      const float cubic_term = cubic_coeff * (
-        (6.0f / omega4) * cos_offset * (1.0f - cosWT) +
-        (6.0f * T / omega3) * sin_offset * sinWT +
-        (6.0f * T / omega3) * cos_offset * (cosWT - 1.0f) +
-        (3.0f * T2 / omega2) * sin_offset * (1.0f - cosWT) +
-        (T3 / omega) * cos_offset * sinWT
-      );
-
-      return linear_term + cubic_term;
-    }
-
-    float ModalNulling::compute_cubic_decel_projection(const float freq, const float v0, const float linear_coeff, const float cubic_coeff,
-                                                       const float duration, const float time_offset) {
-      // For velocity profile: v(t) = v₀ + a*t + c * t³
-      // This combines linear and cubic terms
-
-      const float linear_proj = compute_linear_accel_projection(freq, v0, linear_coeff, duration, time_offset);
-      const float cubic_proj = compute_cubic_velocity_projection(freq, 0.0f, cubic_coeff, duration, time_offset);
-
-      return linear_proj + cubic_proj;
-    }
-
-    float ModalNulling::compute_linear_accel_projection(const float freq, const float v0, const float acceleration,
-                                                        const float duration, const float time_offset) {
-      // For velocity profile: v(t) = v₀ + a*t
-      // This is the same as the existing compute_accel_phase_projection but with time offset
-
-      if (freq <= 0.0f || duration <= 0.0f) return 0.0f;
-
-      const float omega = 2.0f * M_PI * freq;
-      const float cos_offset = COS(omega * time_offset);
-      const float sin_offset = SIN(omega * time_offset);
-      const float cosWT = COS(omega * (duration + time_offset));
-      const float sinWT = SIN(omega * (duration + time_offset));
-
-      const float constant_term = (v0 / omega) * (cos_offset - cosWT);
-      const float linear_term = (acceleration / (omega * omega)) * 
-                                (sinWT - sin_offset - omega * duration * cosWT);
-
-      return constant_term + linear_term;
-    }
-
-    float ModalNulling::compute_linear_decel_projection(const float freq, const float v0, const float deceleration,
-                                                        const float duration, const float time_offset) {
-      // For deceleration: v(t) = v₀ - d*t
-      return compute_linear_accel_projection(freq, v0, -deceleration, duration, time_offset);
-    }
-
-  #endif // S_CURVE_ACCELERATION
-
-  #if HAS_JUNCTION_DEVIATION
-
-    float ModalNulling::apply_junction_deviation_correction(const float base_projection, const float freq,
-                                                            const float start_speed, const float peak_speed, const float end_speed,
-                                                            const float accel_time, const float coast_time, const float decel_time) {
-      // Junction deviation creates smooth curved paths at direction changes instead of sharp corners
-      // This affects the frequency content by:
-      // 1. Reducing high-frequency content (smoothing effect)
-      // 2. Modifying the velocity profile near junctions
-      // 3. Creating centripetal acceleration components
-
-      if (freq <= 0.0f) return base_projection;
-
-      // Calculate junction deviation parameters
-      // In Marlin, junction deviation is calculated based on:
-      // - The angle between current and previous move vectors
-      // - The junction deviation setting (typically 0.01-0.1mm)
-      // - The maximum speeds of the connecting moves
-
-      const float junction_deviation = 0.05f; // This should come from planner settings
-      const float total_time = accel_time + coast_time + decel_time;
-
-      // Estimate the curvature effect based on speed changes
-      const float speed_change_accel = peak_speed - start_speed;
-      const float speed_change_decel = peak_speed - end_speed;
-      const float max_speed_change = _MAX(ABS(speed_change_accel), ABS(speed_change_decel));
-
-      if (max_speed_change < 1.0f) return base_projection; // No significant direction change
-
-      // Calculate the junction angle effect
-      // Larger speed changes typically indicate sharper direction changes
-      const float estimated_angle = ATAN2(max_speed_change, peak_speed); // Rough approximation
-      const float cos_half_angle = COS(estimated_angle * 0.5f);
-
-      // Junction deviation creates a curved path with radius:
-      // r = junction_deviation / (1 - cos(θ/2))
-      const float junction_radius = junction_deviation / (1.0f - cos_half_angle + 1e-6f);
-
-      // Calculate centripetal acceleration at the junction
-      const float centripetal_accel = sq(peak_speed) / junction_radius;
-
-      // Junction deviation affects the motion in several ways:
-      // 1. Velocity profile smoothing near junctions
-      // 2. Additional frequency content from centripetal motion
-      // 3. Path deviation from straight-line motion
-
-      // Calculate the junction transition time (time spent in the curved section)
-      const float junction_arc_length = junction_radius * estimated_angle;
-      const float junction_time = junction_arc_length / peak_speed;
-
-      // Frequency-dependent correction factors
-      const float omega = 2.0f * M_PI * freq;
-
-      // 1. Smoothing effect - higher frequencies are attenuated more
-      // This is based on the transfer function of the junction deviation filter
-      const float smoothing_time_constant = junction_time * 0.5f;
-      const float smoothing_factor = 1.0f / (1.0f + sq(omega * smoothing_time_constant));
-
-      // 2. Centripetal motion contribution
-      // The curved path creates additional sinusoidal motion components
-      float centripetal_projection = 0.0f;
-      if (junction_time > 0.0f && centripetal_accel > 0.0f) {
-        // The centripetal acceleration creates a sinusoidal velocity component
-        // perpendicular to the main motion direction
-        const float centripetal_freq = 1.0f / junction_time; // Characteristic frequency of the junction
-
-        if (ABS(freq - centripetal_freq) < centripetal_freq * 0.1f) {
-          // Resonance near the junction frequency
-          const float resonance_amplitude = centripetal_accel * junction_time / (2.0f * M_PI);
-          centripetal_projection = resonance_amplitude * compute_junction_resonance_projection(freq, junction_time, peak_speed);
-        } else {
-          // Off-resonance contribution
-          const float freq_ratio = freq / centripetal_freq;
-          const float off_resonance_factor = 1.0f / (1.0f + sq(freq_ratio - 1.0f));
-          centripetal_projection = centripetal_accel * junction_time * off_resonance_factor * 0.1f;
-        }
-      }
-
-      // 3. Path deviation effect
-      // The curved path changes the effective distance and timing
-      const float path_deviation_factor = junction_arc_length / (peak_speed * total_time);
-      const float path_correction = 1.0f + path_deviation_factor * SIN(omega * junction_time * 0.5f);
-
-      // 4. Velocity profile modification near junctions
-      // Junction deviation creates smooth velocity transitions
-      const float velocity_smoothing_projection = compute_junction_velocity_smoothing(freq, start_speed, peak_speed, end_speed,
-                                                                                    junction_time, junction_radius);
-
-      // Combine all effects
-      float corrected_projection = base_projection * smoothing_factor * path_correction;
-      corrected_projection += centripetal_projection + velocity_smoothing_projection;
-
-      #if ENABLED(DEBUG_MODAL_NULLING)
-        SERIAL_ECHOLNPGM("Junction deviation analysis:");
-        SERIAL_ECHOLNPGM("  Estimated angle: ", estimated_angle * 180.0f / M_PI, " degrees");
-        SERIAL_ECHOLNPGM("  Junction radius: ", junction_radius, " mm");
-        SERIAL_ECHOLNPGM("  Junction time: ", junction_time, " s");
-        SERIAL_ECHOLNPGM("  Centripetal accel: ", centripetal_accel, " mm/s²");
-        SERIAL_ECHOLNPGM("  Smoothing factor: ", smoothing_factor);
-        SERIAL_ECHOLNPGM("  Path correction: ", path_correction);
-        SERIAL_ECHOLNPGM("  Centripetal projection: ", centripetal_projection);
-        SERIAL_ECHOLNPGM("  Velocity smoothing: ", velocity_smoothing_projection);
-        SERIAL_ECHOLNPGM("  Original projection: ", base_projection);
-        SERIAL_ECHOLNPGM("  Corrected projection: ", corrected_projection);
-      #endif
-
-      return corrected_projection;
-    }
-
-    float ModalNulling::compute_junction_resonance_projection(const float freq, const float junction_time, const float peak_speed) {
-      // Calculate the modal projection for resonant motion at junctions
-      // This accounts for the sinusoidal motion created by the curved path
-
-      if (freq <= 0.0f || junction_time <= 0.0f) return 0.0f;
-
-      const float omega = 2.0f * M_PI * freq;
-      const float junction_omega = 2.0f * M_PI / junction_time;
-
-      // For resonant motion: v_perp(t) = A * sin(ω_junction * t) over the junction time
-      // Modal projection: ∫₀ᵀ A * sin(ω_junction * t) * sin(ω * t) dt
-
-      if (ABS(omega - junction_omega) < 1e-6f) {
-        // Perfect resonance case
-        return peak_speed * junction_time * 0.5f;
-      } else {
-        // Beat frequency case
-        const float omega_diff = omega - junction_omega;
-        const float omega_sum = omega + junction_omega;
-
-        const float term1 = SIN(omega_diff * junction_time) / (2.0f * omega_diff);
-        const float term2 = SIN(omega_sum * junction_time) / (2.0f * omega_sum);
-
-        return peak_speed * (term1 - term2);
-      }
-    }
-
-    float ModalNulling::compute_junction_velocity_smoothing(const float freq, const float start_speed, const float peak_speed,
-                                                            const float end_speed, const float junction_time, const float junction_radius) {
-      // Junction deviation creates smooth velocity transitions that differ from the ideal trapezoidal profile
-      // This function calculates the additional modal projection from these smooth transitions
-
-      if (freq <= 0.0f || junction_time <= 0.0f) return 0.0f;
-
-      const float omega = 2.0f * M_PI * freq;
-
-      // The velocity smoothing can be modeled as a series of exponential transitions
-      // v_smooth(t) = v_ideal(t) + Σ A_i * exp(-t/τ_i) * sin(ω_i * t + φ_i)
-
-      // Calculate the smoothing time constants based on junction geometry
-      const float smoothing_tau = junction_time * 0.2f; // Empirical factor
-      const float smoothing_amplitude = _MIN(ABS(peak_speed - start_speed), ABS(peak_speed - end_speed)) * 0.1f;
-
-      // Exponentially decaying sinusoidal contribution
-      const float decay_factor = 1.0f - expf(-junction_time / smoothing_tau);
-      const float frequency_response = 1.0f / (1.0f + sq(omega * smoothing_tau));
-
-      return smoothing_amplitude * decay_factor * frequency_response * junction_time;
-    }
-
-    // Additional helper function to get actual junction deviation from planner settings
-    float ModalNulling::get_junction_deviation_setting() {
-      // This should access the actual planner junction deviation setting
-      // For now, return a typical value - this needs to be connected to planner.junction_deviation_mm
-      #if HAS_JUNCTION_DEVIATION
-        return planner.junction_deviation_mm;
-      #else
-        return 0.05f; // Default fallback
-      #endif
-    }
-
-    // Enhanced function to get junction angle from move vectors
-    float ModalNulling::calculate_junction_angle(const xyze_float_t& prev_unit_vec, const xyze_float_t& curr_unit_vec) {
-      // Calculate the actual angle between two move vectors
-      // This is how Marlin calculates junction angles in the planner
-
-      const float dot_product = prev_unit_vec.x * curr_unit_vec.x + prev_unit_vec.y * curr_unit_vec.y + prev_unit_vec.z * curr_unit_vec.z;
-      const float cos_theta = WITHIN(dot_product, -1.0f, 1.0f) ? dot_product : (dot_product < 0.0f ? -1.0f : 1.0f);
-
-      return ACOS(-cos_theta); // Note: Marlin uses the supplement of the angle
-    }
-
-  #endif // HAS_JUNCTION_DEVIATION
-
-#endif // S_CURVE_ACCELERATION || HAS_JUNCTION_DEVIATION
-
 modal_kernel_t ModalNulling::compute_nulling_kernel(const float freq, const float damping, const float beta,
                                                     const float modal_projection, const float segment_time) {
   modal_kernel_t kernel = {};
@@ -703,7 +288,7 @@ float ModalNulling::compute_decel_phase_projection(const float freq, const float
 
   // For deceleration phase: v(t) = peak_speed - deceleration * t over [0, T_decel]
   // This is similar to acceleration but with negative slope
-  // Modal projection = ∫₀ᵀ (v_peak - decel*t) * sin(ωt) dt
+  // Modal projection = ∫₀ᵀ (v_peak - decel * t) * sin(ωt) dt
   //
   // Component 1: v_peak * ∫₀ᵀ sin(ωt) dt
   // Component 2: -decel * ∫₀ᵀ t*sin(ωt) dt
@@ -757,9 +342,7 @@ void ModalNulling::apply_kernel_to_trajectory_point(const modal_kernel_t& kernel
   const float kernel_value = evaluate_kernel(kernel, time);
 
   if (ABS(kernel_value) > 1e-12f) {
-
     const float correction = evaluate_position_correction_from_kernel(kernel, time);;
-
     switch (axis) {
       case X_AXIS: trajectory.x[batch_idx] += correction; break;
       case Y_AXIS: trajectory.y[batch_idx] += correction; break;
@@ -767,7 +350,7 @@ void ModalNulling::apply_kernel_to_trajectory_point(const modal_kernel_t& kernel
     }
 
     #if ENABLED(DEBUG_MODAL_NULLING)
-      if (batch_idx % 50 == 0) { // Debug every 50th point
+      if (batch_idx % 100 == 0) { // Debug every 100th point
         SERIAL_ECHOLNPGM("Modal correction - Axis: ", axis, " Time: ", time);
         SERIAL_ECHOLNPGM(" Kernel value: ", kernel_value);
         if (ABS(correction) < 0.001f) {
